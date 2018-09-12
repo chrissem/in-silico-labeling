@@ -123,91 +123,91 @@ def infer(
     def get_statistics(tensor):
       rc = lt.ReshapeCoder(list(tensor.axes.keys())[:-1], ['batch'])
       return rc.decode(ops.distribution_statistics(rc.encode(tensor)))
+    with tf.device('/cpu:0'):
+      visualize_input_lt = visualization_lts['input']
+      visualize_predict_input_lt = get_statistics(
+          visualization_lts['predict_input'])
+      visualize_target_lt = visualization_lts['target']
+      visualize_predict_target_lt = get_statistics(
+          visualization_lts['predict_target'])
 
-    visualize_input_lt = visualization_lts['input']
-    visualize_predict_input_lt = get_statistics(
-        visualization_lts['predict_input'])
-    visualize_target_lt = visualization_lts['target']
-    visualize_predict_target_lt = get_statistics(
-        visualization_lts['predict_target'])
+      input_lt = lt.LabeledTensor(
+          tf.placeholder(
+              dtype=np.float32,
+              shape=[
+                  1, num_output_rows, num_output_columns,
+                  len(gitapp.dp.input_z_values), 1, 2
+              ]),
+          axes=[
+              'batch',
+              'row',
+              'column',
+              ('z', gitapp.dp.input_z_values),
+              ('channel', ['TRANSMISSION']),
+              ('mask', [False, True]),
+          ])
+      predict_input_lt = lt.LabeledTensor(
+          tf.placeholder(
+              dtype=np.float32,
+              shape=[
+                  1,
+                  num_output_rows,
+                  num_output_columns,
+                  len(gitapp.dp.input_z_values),
+                  1,
+                  len(visualize_predict_input_lt.axes['statistic']),
+              ]),
+          axes=[
+              'batch',
+              'row',
+              'column',
+              ('z', gitapp.dp.input_z_values),
+              ('channel', ['TRANSMISSION']),
+              visualize_predict_input_lt.axes['statistic'],
+          ])
+      input_error_panel_lt = visualize.error_panel_from_statistics(
+          input_lt, predict_input_lt, simplify_error_panels)
 
-    input_lt = lt.LabeledTensor(
-        tf.placeholder(
-            dtype=np.float32,
-            shape=[
-                1, num_output_rows, num_output_columns,
-                len(gitapp.dp.input_z_values), 1, 2
-            ]),
-        axes=[
-            'batch',
-            'row',
-            'column',
-            ('z', gitapp.dp.input_z_values),
-            ('channel', ['TRANSMISSION']),
-            ('mask', [False, True]),
-        ])
-    predict_input_lt = lt.LabeledTensor(
-        tf.placeholder(
-            dtype=np.float32,
-            shape=[
-                1,
-                num_output_rows,
-                num_output_columns,
-                len(gitapp.dp.input_z_values),
-                1,
-                len(visualize_predict_input_lt.axes['statistic']),
-            ]),
-        axes=[
-            'batch',
-            'row',
-            'column',
-            ('z', gitapp.dp.input_z_values),
-            ('channel', ['TRANSMISSION']),
-            visualize_predict_input_lt.axes['statistic'],
-        ])
-    input_error_panel_lt = visualize.error_panel_from_statistics(
-        input_lt, predict_input_lt, simplify_error_panels)
+      target_lt = lt.LabeledTensor(
+          tf.placeholder(
+              dtype=np.float32,
+              shape=[
+                  1, num_output_rows, num_output_columns,
+                  len(gitapp.dp.target_z_values),
+                  len(gitapp.dp.target_channel_values) + 1, 2
+              ]),
+          axes=[
+              'batch',
+              'row',
+              'column',
+              ('z', gitapp.dp.target_z_values),
+              ('channel', gitapp.dp.target_channel_values + ['NEURITE_CONFOCAL']),
+              ('mask', [False, True]),
+          ])
+      predict_target_lt = lt.LabeledTensor(
+          tf.placeholder(
+              dtype=np.float32,
+              shape=[
+                  1,
+                  num_output_rows,
+                  num_output_columns,
+                  len(gitapp.dp.target_z_values),
+                  len(gitapp.dp.target_channel_values) + 1,
+                  len(visualize_predict_target_lt.axes['statistic']),
+              ]),
+          axes=[
+              'batch',
+              'row',
+              'column',
+              ('z', gitapp.dp.target_z_values),
+              ('channel', gitapp.dp.target_channel_values + ['NEURITE_CONFOCAL']),
+              visualize_predict_target_lt.axes['statistic'],
+          ])
 
-    target_lt = lt.LabeledTensor(
-        tf.placeholder(
-            dtype=np.float32,
-            shape=[
-                1, num_output_rows, num_output_columns,
-                len(gitapp.dp.target_z_values),
-                len(gitapp.dp.target_channel_values) + 1, 2
-            ]),
-        axes=[
-            'batch',
-            'row',
-            'column',
-            ('z', gitapp.dp.target_z_values),
-            ('channel', gitapp.dp.target_channel_values + ['NEURITE_CONFOCAL']),
-            ('mask', [False, True]),
-        ])
-    predict_target_lt = lt.LabeledTensor(
-        tf.placeholder(
-            dtype=np.float32,
-            shape=[
-                1,
-                num_output_rows,
-                num_output_columns,
-                len(gitapp.dp.target_z_values),
-                len(gitapp.dp.target_channel_values) + 1,
-                len(visualize_predict_target_lt.axes['statistic']),
-            ]),
-        axes=[
-            'batch',
-            'row',
-            'column',
-            ('z', gitapp.dp.target_z_values),
-            ('channel', gitapp.dp.target_channel_values + ['NEURITE_CONFOCAL']),
-            visualize_predict_target_lt.axes['statistic'],
-        ])
-
-    logging.info('input_lt: %r', input_lt)
-    logging.info('predict_input_lt: %r', predict_input_lt)
-    logging.info('target_lt: %r', target_lt)
-    logging.info('predict_target_lt: %r', predict_target_lt)
+      logging.info('input_lt: %r', input_lt)
+      logging.info('predict_input_lt: %r', predict_input_lt)
+      logging.info('target_lt: %r', target_lt)
+      logging.info('predict_target_lt: %r', predict_target_lt)
 
     def select_channels(tensor):
       if channel_whitelist is not None:
@@ -228,73 +228,98 @@ def infer(
                  restore_directory)
     init_fn = util.restore_model(
         restore_directory, restore_logits=True, restore_global_step=True)
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth=True
+    # When using lower-level APIs with a Session object. User can have
+    # explicit control of each step.
+    #
+    # Create options to profile the time and memory information.
+    builder = tf.profiler.ProfileOptionBuilder
+    opts = builder(builder.time_and_memory()).order_by('micros').build()
+    # Create a profiling context, set constructor argument `trace_steps`,
+    # `dump_steps` to empty for explicit control.
+    with tf.contrib.tfprof.ProfileContext(restore_directory,
+                                          trace_steps=[],
+                                          dump_steps=[]) as pctx:
+      with tf.Session(config=config) as sess:
+        pctx.trace_next_step()
+        #run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+        #run_metadata = tf.RunMetadata()
+        run_options = tf.RunOptions(report_tensor_allocations_upon_oom = True)
+        logging.info('Generating images')
+        init_fn(sess)
 
-    with tf.Session() as sess:
-      logging.info('Generating images')
-      init_fn(sess)
+        input_rows = []
+        predict_input_rows = []
+        target_rows = []
+        predict_target_rows = []
+        for infer_row in range(num_row_inferences):
+          pctx.dump_next_step()
+          input_row = []
+          predict_input_row = []
+          target_row = []
+          predict_target_row = []
+          for infer_column in range(num_column_inferences):
+            rs = infer_row * infer_size * stitch_stride
+            cs = infer_column * infer_size * stitch_stride
+            logging.info('Running inference at offset: (%d, %d)', rs, cs)
+            [inpt, predict_input, target, predict_target] = sess.run(
+                [
+                    visualize_input_lt,
+                    visualize_predict_input_lt,
+                    visualize_target_lt,
+                    visualize_predict_target_lt,
+                ],
+                feed_dict={
+                    row_start: rs,
+                    column_start: cs
+                },
+                options=run_options
+                #run_metadata=run_metadata
+                )
+            input_row.append(inpt)
+            predict_input_row.append(predict_input)
+            target_row.append(target)
+            predict_target_row.append(predict_target)
+          input_rows.append(np.concatenate(input_row, axis=2))
+          predict_input_rows.append(np.concatenate(predict_input_row, axis=2))
+          target_rows.append(np.concatenate(target_row, axis=2))
+          predict_target_rows.append(np.concatenate(predict_target_row, axis=2))
+          pctx.profiler.profile_operations(options=opts)
+          #train_writer.add_run_metadata(run_metadata, 'step%d' % infer_column)
+          #train_writer.add_summary(summary, infer_column)
+          #print('Adding run metadata for', infer_column)
 
-      input_rows = []
-      predict_input_rows = []
-      target_rows = []
-      predict_target_rows = []
-      for infer_row in range(num_row_inferences):
-        input_row = []
-        predict_input_row = []
-        target_row = []
-        predict_target_row = []
-        for infer_column in range(num_column_inferences):
-          rs = infer_row * infer_size * stitch_stride
-          cs = infer_column * infer_size * stitch_stride
-          logging.info('Running inference at offset: (%d, %d)', rs, cs)
-          [inpt, predict_input, target, predict_target] = sess.run(
+
+        with tf.device('/cpu:0'):
+          logging.info('Stitching')
+          stitched_input = np.concatenate(input_rows, axis=1)
+          stitched_predict_input = np.concatenate(predict_input_rows, axis=1)
+          stitched_target = np.concatenate(target_rows, axis=1)
+          stitched_predict_target = np.concatenate(predict_target_rows, axis=1)
+
+          logging.info('Creating error panels')
+          [input_error_panel, target_error_panel, global_step] = sess.run(
               [
-                  visualize_input_lt,
-                  visualize_predict_input_lt,
-                  visualize_target_lt,
-                  visualize_predict_target_lt,
+                  input_error_panel_lt, target_error_panel_lt,
+                  tf.train.get_global_step()
               ],
               feed_dict={
-                  row_start: rs,
-                  column_start: cs
+                  input_lt: stitched_input,
+                  predict_input_lt: stitched_predict_input,
+                  target_lt: stitched_target,
+                  predict_target_lt: stitched_predict_target,
               })
 
-          input_row.append(inpt)
-          predict_input_row.append(predict_input)
-          target_row.append(target)
-          predict_target_row.append(predict_target)
-        input_rows.append(np.concatenate(input_row, axis=2))
-        predict_input_rows.append(np.concatenate(predict_input_row, axis=2))
-        target_rows.append(np.concatenate(target_row, axis=2))
-        predict_target_rows.append(np.concatenate(predict_target_row, axis=2))
+        output_directory = os.path.join(output_directory, '%.8d' % global_step)
+        if not gfile.Exists(output_directory):
+          gfile.MakeDirs(output_directory)
 
-      logging.info('Stitching')
-      stitched_input = np.concatenate(input_rows, axis=1)
-      stitched_predict_input = np.concatenate(predict_input_rows, axis=1)
-      stitched_target = np.concatenate(target_rows, axis=1)
-      stitched_predict_target = np.concatenate(predict_target_rows, axis=1)
+        util.write_image(
+            os.path.join(output_directory, 'input_error_panel.png'),
+            input_error_panel[0, :, :, :])
+        util.write_image(
+            os.path.join(output_directory, 'target_error_panel.png'),
+            target_error_panel[0, :, :, :])
 
-      logging.info('Creating error panels')
-      [input_error_panel, target_error_panel, global_step] = sess.run(
-          [
-              input_error_panel_lt, target_error_panel_lt,
-              tf.train.get_global_step()
-          ],
-          feed_dict={
-              input_lt: stitched_input,
-              predict_input_lt: stitched_predict_input,
-              target_lt: stitched_target,
-              predict_target_lt: stitched_predict_target,
-          })
-
-      output_directory = os.path.join(output_directory, '%.8d' % global_step)
-      if not gfile.Exists(output_directory):
-        gfile.MakeDirs(output_directory)
-
-      util.write_image(
-          os.path.join(output_directory, 'input_error_panel.png'),
-          input_error_panel[0, :, :, :])
-      util.write_image(
-          os.path.join(output_directory, 'target_error_panel.png'),
-          target_error_panel[0, :, :, :])
-
-      logging.info('Done generating images')
+        logging.info('Done generating images')
