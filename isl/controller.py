@@ -232,54 +232,54 @@ def get_input_target_and_predicted(
   with tf.name_scope(name, 'get_input_target_and_predicted', []) as scope:
     # Do all preprocessing on the CPU, to avoid contending with the GPU if
     # it's evaluating the model.
-    # with tf.device('/cpu:0'):
-    patch_centers, input_lt, target_lt = provide_preprocessed_data(
-        gitapp.dp, gitapp.ap, gitapp.extract_patch_size, gitapp.stride)
+    with tf.device('/cpu:0'):
+      patch_centers, input_lt, target_lt = provide_preprocessed_data(
+          gitapp.dp, gitapp.ap, gitapp.extract_patch_size, gitapp.stride)
 
-    if gitapp.bp is not None:
-      if gitapp.shuffle:
-        input_lt, target_lt = lt.shuffle_batch(
-            [input_lt, target_lt],
-            name='preprocess',
-            batch_size=gitapp.bp.size,
-            num_threads=gitapp.bp.num_threads,
-            capacity=gitapp.bp.capacity,
-            enqueue_many=True,
-            min_after_dequeue=gitapp.bp.capacity // 2)
-      else:
-        input_lt, target_lt = util.entry_point_batch(
-            [input_lt, target_lt],
-            bp=gitapp.bp,
-            enqueue_many=True,
-            entry_point_names=['input_patch', 'target_patch'],
-            name='preprocess')
+      if gitapp.bp is not None:
+        if gitapp.shuffle:
+          input_lt, target_lt = lt.shuffle_batch(
+              [input_lt, target_lt],
+              name='preprocess',
+              batch_size=gitapp.bp.size,
+              num_threads=gitapp.bp.num_threads,
+              capacity=gitapp.bp.capacity,
+              enqueue_many=True,
+              min_after_dequeue=gitapp.bp.capacity // 2)
+        else:
+          input_lt, target_lt = util.entry_point_batch(
+              [input_lt, target_lt],
+              bp=gitapp.bp,
+              enqueue_many=True,
+              entry_point_names=['input_patch', 'target_patch'],
+              name='preprocess')
 
-    pp = model_util.PredictionParameters(
-        [(input_lt.axes['z'].labels, input_lt.axes['channel'].labels),
-         (target_lt.axes['z'].labels, target_lt.axes['channel'].labels)],
-        gitapp.num_classes)
-    # pylint: disable=unbalanced-tuple-unpacking
-    predict_input_lt, predict_target_lt = model(
-        gitapp.core_model, gitapp.add_head, pp, gitapp.is_train, input_lt)
-    # pylint: enable=unbalanced-tuple-unpacking
-    # Ensure the model output size is as we expect.
-    assert len(predict_input_lt.axes[
-        'row']) == gitapp.stitch_patch_size, predict_input_lt
-    assert len(predict_input_lt.axes[
-        'column']) == gitapp.stitch_patch_size, predict_input_lt
-    assert len(predict_target_lt.axes[
-        'row']) == gitapp.stitch_patch_size, predict_target_lt
-    assert len(predict_target_lt.axes[
-        'column']) == gitapp.stitch_patch_size, predict_target_lt
+      pp = model_util.PredictionParameters(
+          [(input_lt.axes['z'].labels, input_lt.axes['channel'].labels),
+           (target_lt.axes['z'].labels, target_lt.axes['channel'].labels)],
+          gitapp.num_classes)
+      # pylint: disable=unbalanced-tuple-unpacking
+      predict_input_lt, predict_target_lt = model(
+          gitapp.core_model, gitapp.add_head, pp, gitapp.is_train, input_lt)
+      # pylint: enable=unbalanced-tuple-unpacking
+      # Ensure the model output size is as we expect.
+      assert len(predict_input_lt.axes[
+          'row']) == gitapp.stitch_patch_size, predict_input_lt
+      assert len(predict_input_lt.axes[
+          'column']) == gitapp.stitch_patch_size, predict_input_lt
+      assert len(predict_target_lt.axes[
+          'row']) == gitapp.stitch_patch_size, predict_target_lt
+      assert len(predict_target_lt.axes[
+          'column']) == gitapp.stitch_patch_size, predict_target_lt
 
-    input_lt = lt.identity(input_lt, name=scope + 'input')
-    target_lt = lt.identity(target_lt, name=scope + 'target')
-    predict_input_lt = lt.identity(
-        predict_input_lt, name=scope + 'predict_input')
-    predict_target_lt = lt.identity(
-        predict_target_lt, name=scope + 'predict_target')
+      input_lt = lt.identity(input_lt, name=scope + 'input')
+      target_lt = lt.identity(target_lt, name=scope + 'target')
+      predict_input_lt = lt.identity(
+          predict_input_lt, name=scope + 'predict_input')
+      predict_target_lt = lt.identity(
+          predict_target_lt, name=scope + 'predict_target')
 
-    return (patch_centers, input_lt, target_lt, predict_input_lt,
+      return (patch_centers, input_lt, target_lt, predict_input_lt,
             predict_target_lt)
 
 

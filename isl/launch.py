@@ -463,7 +463,7 @@ def train(gitapp: controller.GetInputTargetAndPredictedParameters):
         save_summaries_secs=FLAGS.save_summaries_secs,
         save_interval_secs=FLAGS.save_interval_secs,
         init_fn=init_fn,
-        saver=tf.train.Saver(keep_checkpoint_every_n_hours=2.0))
+        saver=tf.train.Saver(keep_checkpoint_every_n_hours=0.25))
 
 
 def eval_loss(gitapp: controller.GetInputTargetAndPredictedParameters):
