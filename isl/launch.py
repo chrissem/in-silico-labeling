@@ -190,6 +190,9 @@ flags.DEFINE_bool(
 flags.DEFINE_integer('num_z_values', 26,
                      'Number of z depths to use from input.')
 
+flags.DEFINE_integer('num_gpus', 0,
+                     'Number of GPUs to use. 0 means CPU.')
+
 FLAGS = flags.FLAGS
 
 
@@ -319,7 +322,7 @@ def parameters() -> controller.GetInputTargetAndPredictedParameters:
     is_train = False
 
   if FLAGS.model == MODEL_CONCORDANCE:
-    core_model = functools.partial(concordance.core, FLAGS.base_depth)
+    core_model = functools.partial(concordance.core, base_depth=FLAGS.base_depth, num_gpus=FLAGS.num_gpus)
     add_head = functools.partial(model_util.add_head, is_residual_conv=True)
     extract_patch_size = CONCORDANCE_EXTRACT_PATCH_SIZE
     stitch_patch_size = CONCORDANCE_STITCH_PATCH_SIZE
@@ -438,7 +441,7 @@ def train(gitapp: controller.GetInputTargetAndPredictedParameters):
 
     # Set up training.
     train_op = slim.learning.create_train_op(
-        total_loss_op, optimizer, summarize_gradients=True)
+        total_loss_op, optimizer, summarize_gradients=True, colocate_gradients_with_ops=True)
 
     if FLAGS.restore_directory:
       init_fn = util.restore_model(FLAGS.restore_directory,
