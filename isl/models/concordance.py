@@ -51,6 +51,7 @@ IN_SCALE_REDUCTION_SIZE = 1
 INITIAL_PROJECTION_DIMENSION = 16
 
 
+
 def get_device(idx, num_gpus):
     if num_gpus == 0:
         return '/cpu:0'
@@ -80,12 +81,11 @@ def core(
       Network heads should take this layer as input.
     """
     with tf.name_scope(name, 'concordance_core', [input_op]) as scope:
-        dv = functools.partial(get_device, num_gpus=num_gpus)
+        # dv = functools.partial(get_device, num_gpus=num_gpus)
         # Ensure the input data is in the range [0.0, 1.0].
         input_op = tensorcheck.bounds_unlabeled(0.0, 1.0, input_op)
-        with tf.device(dv(0)):
-            input_op = slim.conv2d(
-                input_op, INITIAL_PROJECTION_DIMENSION, [1, 1], activation_fn=None)
+        input_op = slim.conv2d(
+            input_op, INITIAL_PROJECTION_DIMENSION, [1, 1], activation_fn=None)
 
         # These are the layer sizes (size == width == height) for the lower part
         # of the network (the part that comes before spatial merging).
@@ -141,71 +141,69 @@ def core(
 
         scale_ops = []
         for s in range(num_scales):
-            with tf.device(dv(s)):
-                if s == 0:
-                    scale_op = util.crop_center_unlabeled(lls[0][0], input_op)
-                elif s == 1:
-                    scale_op = util.crop_center_unlabeled(lls[1][0], input_op)
-                    scale_op = foveate(lls[1][2], scale_op, 'downscale_1_0')
-                elif s == 2:
-                    scale_op = util.crop_center_unlabeled(lls[2][0], input_op)
-                    # Note we're skipping every other layer here and below because
-                    # `foveate` is composed of two model_util.modules
-                    # (`add_in_scale_model_util.module` is True).
-                    scale_op = foveate(lls[2][2], scale_op, 'downscale_2_0')
-                    scale_op = foveate(lls[2][4], scale_op, 'downscale_2_1')
-                elif s == 3:
-                    scale_op = util.crop_center_unlabeled(lls[3][0], input_op)
-                    scale_op = foveate(lls[3][2], scale_op, 'downscale_3_0')
-                    scale_op = foveate(lls[3][4], scale_op, 'downscale_3_1')
-                    scale_op = foveate(lls[3][6], scale_op, 'downscale_3_2')
-                elif s == 4:
-                    # There's no need to crop.
-                    scale_op = foveate(lls[4][2], input_op, 'downscale_4_0')
-                    scale_op = foveate(lls[4][4], scale_op, 'downscale_4_1')
-                    scale_op = foveate(lls[4][6], scale_op, 'downscale_4_2')
-                    scale_op = foveate(lls[4][8], scale_op, 'downscale_4_3')
-                else:
-                    raise AssertionError
+            if s == 0:
+                scale_op = util.crop_center_unlabeled(lls[0][0], input_op)
+            elif s == 1:
+                scale_op = util.crop_center_unlabeled(lls[1][0], input_op)
+                scale_op = foveate(lls[1][2], scale_op, 'downscale_1_0')
+            elif s == 2:
+                scale_op = util.crop_center_unlabeled(lls[2][0], input_op)
+                # Note we're skipping every other layer here and below because
+                # `foveate` is composed of two model_util.modules
+                # (`add_in_scale_model_util.module` is True).
+                scale_op = foveate(lls[2][2], scale_op, 'downscale_2_0')
+                scale_op = foveate(lls[2][4], scale_op, 'downscale_2_1')
+            elif s == 3:
+                scale_op = util.crop_center_unlabeled(lls[3][0], input_op)
+                scale_op = foveate(lls[3][2], scale_op, 'downscale_3_0')
+                scale_op = foveate(lls[3][4], scale_op, 'downscale_3_1')
+                scale_op = foveate(lls[3][6], scale_op, 'downscale_3_2')
+            elif s == 4:
+                # There's no need to crop.
+                scale_op = foveate(lls[4][2], input_op, 'downscale_4_0')
+                scale_op = foveate(lls[4][4], scale_op, 'downscale_4_1')
+                scale_op = foveate(lls[4][6], scale_op, 'downscale_4_2')
+                scale_op = foveate(lls[4][8], scale_op, 'downscale_4_3')
+            else:
+                raise AssertionError
 
-                logging.info('scale %d tower input shape: %s', s,
-                             str(scale_op.shape.as_list()))
-                scale_ops.append(scale_op)
+            logging.info('scale %d tower input shape: %s', s,
+                         str(scale_op.shape.as_list()))
+            scale_ops.append(scale_op)
 
         multiscale_tower_ops = []
         for s in range(num_scales):
-            with tf.device(dv(s)):
-                recursive_op = scale_ops[s]
+            recursive_op = scale_ops[s]
 
-                for r in range(num_lower_recursive_stacks(s)):
-                    final_size = recursive_op.shape.as_list()[1] - 2
-                    recursive_op = model_util.module(
-                        IN_SCALE_EXPANSION_SIZE,
-                        IN_SCALE_REDUCTION_SIZE,
-                        model_util.size_to_depth(base_depth, final_size, True),
-                        model_util.size_to_depth(base_depth, final_size, False),
-                        is_deconv=False,
-                        add_bias=False,
-                        min_depth_from_residual=True,
-                        is_train=is_train,
-                        input_op=recursive_op,
-                        name='lower_scale_%d_recursion_%d' % (s, r))
+            for r in range(num_lower_recursive_stacks(s)):
+                final_size = recursive_op.shape.as_list()[1] - 2
+                recursive_op = model_util.module(
+                    IN_SCALE_EXPANSION_SIZE,
+                    IN_SCALE_REDUCTION_SIZE,
+                    model_util.size_to_depth(base_depth, final_size, True),
+                    model_util.size_to_depth(base_depth, final_size, False),
+                    is_deconv=False,
+                    add_bias=False,
+                    min_depth_from_residual=True,
+                    is_train=is_train,
+                    input_op=recursive_op,
+                    name='lower_scale_%d_recursion_%d' % (s, r))
 
-                num_recursive_rows = recursive_op.shape.as_list()[1]
-                if s == 0:
-                    assert num_recursive_rows == lls[0][-1], num_recursive_rows
-                elif s == 1:
-                    assert num_recursive_rows == lls[1][-3], num_recursive_rows
-                elif s == 2:
-                    assert num_recursive_rows == lls[2][-5], num_recursive_rows
-                elif s == 3:
-                    assert num_recursive_rows == lls[3][-7], num_recursive_rows
-                elif s == 4:
-                    assert num_recursive_rows == lls[4][-9], num_recursive_rows
-                else:
-                    raise AssertionError
+            num_recursive_rows = recursive_op.shape.as_list()[1]
+            if s == 0:
+                assert num_recursive_rows == lls[0][-1], num_recursive_rows
+            elif s == 1:
+                assert num_recursive_rows == lls[1][-3], num_recursive_rows
+            elif s == 2:
+                assert num_recursive_rows == lls[2][-5], num_recursive_rows
+            elif s == 3:
+                assert num_recursive_rows == lls[3][-7], num_recursive_rows
+            elif s == 4:
+                assert num_recursive_rows == lls[4][-9], num_recursive_rows
+            else:
+                raise AssertionError
 
-                multiscale_tower_ops.append(recursive_op)
+            multiscale_tower_ops.append(recursive_op)
 
         def defoveate(final_size: int, op: tf.Tensor, name: str) -> tf.Tensor:
             return model_util.learned_defovea(is_train, base_depth, True, True,
@@ -213,30 +211,29 @@ def core(
 
         deconv_ops = []
         for s in range(num_scales):
-            with tf.device(dv(s)):
-                recursive_op = multiscale_tower_ops[s]
+            recursive_op = multiscale_tower_ops[s]
 
-                if s == 0:
-                    deconv_op = recursive_op
-                elif s == 1:
-                    deconv_op = defoveate(lls[1][-1], recursive_op, 'upscale_1_0')
-                elif s == 2:
-                    # Note we're skipping every other layer here and below because
-                    # `defoveate` is composed of two model_util.modules
-                    # (`add_in_scale_model_util.module` is True).
-                    deconv_op = defoveate(lls[2][-3], recursive_op, 'upscale_2_0')
-                    deconv_op = defoveate(lls[2][-1], deconv_op, 'upscale_2_1')
-                elif s == 3:
-                    deconv_op = defoveate(lls[3][-5], recursive_op, 'upscale_3_0')
-                    deconv_op = defoveate(lls[3][-3], deconv_op, 'upscale_3_1')
-                    deconv_op = defoveate(lls[3][-1], deconv_op, 'upscale_3_2')
-                elif s == 4:
-                    deconv_op = defoveate(lls[4][-7], recursive_op, 'upscale_4_0')
-                    deconv_op = defoveate(lls[4][-5], deconv_op, 'upscale_4_1')
-                    deconv_op = defoveate(lls[4][-3], deconv_op, 'upscale_4_2')
-                    deconv_op = defoveate(lls[4][-1], deconv_op, 'upscale_4_3')
-                else:
-                    raise AssertionError
+            if s == 0:
+                deconv_op = recursive_op
+            elif s == 1:
+                deconv_op = defoveate(lls[1][-1], recursive_op, 'upscale_1_0')
+            elif s == 2:
+                # Note we're skipping every other layer here and below because
+                # `defoveate` is composed of two model_util.modules
+                # (`add_in_scale_model_util.module` is True).
+                deconv_op = defoveate(lls[2][-3], recursive_op, 'upscale_2_0')
+                deconv_op = defoveate(lls[2][-1], deconv_op, 'upscale_2_1')
+            elif s == 3:
+                deconv_op = defoveate(lls[3][-5], recursive_op, 'upscale_3_0')
+                deconv_op = defoveate(lls[3][-3], deconv_op, 'upscale_3_1')
+                deconv_op = defoveate(lls[3][-1], deconv_op, 'upscale_3_2')
+            elif s == 4:
+                deconv_op = defoveate(lls[4][-7], recursive_op, 'upscale_4_0')
+                deconv_op = defoveate(lls[4][-5], deconv_op, 'upscale_4_1')
+                deconv_op = defoveate(lls[4][-3], deconv_op, 'upscale_4_2')
+                deconv_op = defoveate(lls[4][-1], deconv_op, 'upscale_4_3')
+            else:
+                raise AssertionError
 
                 deconv_ops.append(deconv_op)
 

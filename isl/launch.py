@@ -37,6 +37,7 @@ from isl import infer
 from isl import util
 from isl.models import concordance
 from isl.models import model_util
+from isl.util import assign_to_device
 
 slim = tf.contrib.slim
 metrics = tf.contrib.metrics
@@ -198,11 +199,11 @@ FLAGS = flags.FLAGS
 
 # TODO(ericmc): Consider simplifying this using np.linspace.
 def get_z_values() -> List[float]:
-  """Gets the z-values the model will take as input."""
-  values = np.linspace(0.0, 1.0, FLAGS.num_z_values)
-  values = [round(v, 4) for v in values]
-  logging.info('z_values: %r', values)
-  return values
+    """Gets the z-values the model will take as input."""
+    values = np.linspace(0.0, 1.0, FLAGS.num_z_values)
+    values = [round(v, 4) for v in values]
+    logging.info('z_values: %r', values)
+    return values
 
 
 INPUT_CHANNEL_VALUES = [
@@ -235,369 +236,374 @@ NUM_CLASSES = 256
 
 
 def data_parameters() -> data_provider.DataParameters:
-  """Creates the DataParameters."""
-  if FLAGS.read_pngs:
-    if FLAGS.mode == MODE_TRAIN or FLAGS.mode == MODE_EVAL_TRAIN:
-      directory = FLAGS.dataset_train_directory
-    else:
-      directory = FLAGS.dataset_eval_directory
+    """Creates the DataParameters."""
+    if FLAGS.read_pngs:
+        if FLAGS.mode == MODE_TRAIN or FLAGS.mode == MODE_EVAL_TRAIN:
+            directory = FLAGS.dataset_train_directory
+        else:
+            directory = FLAGS.dataset_eval_directory
 
-    if FLAGS.metric == METRIC_LOSS:
-      crop_size = FLAGS.loss_crop_size
-    else:
-      crop_size = FLAGS.stitch_crop_size
+        if FLAGS.metric == METRIC_LOSS:
+            crop_size = FLAGS.loss_crop_size
+        else:
+            crop_size = FLAGS.stitch_crop_size
 
-    io_parameters = data_provider.ReadPNGsParameters(directory, None, None,
-                                                     crop_size)
-  else:
-    # Use an eighth of the dataset for validation.
-    if FLAGS.mode == MODE_TRAIN or FLAGS.mode == MODE_EVAL_TRAIN:
-      dataset = [
-          FLAGS.dataset_pattern % i
-          for i in range(FLAGS.dataset_num_shards)
-          if (i % 8 != 0) or FLAGS.train_on_full_dataset
-      ]
+        io_parameters = data_provider.ReadPNGsParameters(directory, None, None,
+                                                         crop_size)
     else:
-      dataset = [
-          FLAGS.dataset_pattern % i
-          for i in range(FLAGS.dataset_num_shards)
-          if i % 8 == 0
-      ]
-    if FLAGS.metric == METRIC_LOSS:
-      crop_size = FLAGS.loss_crop_size
-    else:
-      crop_size = FLAGS.stitch_crop_size
+        # Use an eighth of the dataset for validation.
+        if FLAGS.mode == MODE_TRAIN or FLAGS.mode == MODE_EVAL_TRAIN:
+            dataset = [
+                FLAGS.dataset_pattern % i
+                for i in range(FLAGS.dataset_num_shards)
+                if (i % 8 != 0) or FLAGS.train_on_full_dataset
+            ]
+        else:
+            dataset = [
+                FLAGS.dataset_pattern % i
+                for i in range(FLAGS.dataset_num_shards)
+                if i % 8 == 0
+            ]
+        if FLAGS.metric == METRIC_LOSS:
+            crop_size = FLAGS.loss_crop_size
+        else:
+            crop_size = FLAGS.stitch_crop_size
 
-    if FLAGS.model == MODEL_CONCORDANCE:
-      extract_patch_size = CONCORDANCE_EXTRACT_PATCH_SIZE
-      stitch_patch_size = CONCORDANCE_STITCH_PATCH_SIZE
-    else:
-      raise NotImplementedError('Unsupported model: %s' % FLAGS.model)
+        if FLAGS.model == MODEL_CONCORDANCE:
+            extract_patch_size = CONCORDANCE_EXTRACT_PATCH_SIZE
+            stitch_patch_size = CONCORDANCE_STITCH_PATCH_SIZE
+        else:
+            raise NotImplementedError('Unsupported model: %s' % FLAGS.model)
 
-    if FLAGS.mode == MODE_EXPORT:
-      # Any padding will be done by the C++ caller.
-      pad_width = 0
-    else:
-      pad_width = (extract_patch_size - stitch_patch_size) // 2
+        if FLAGS.mode == MODE_EXPORT:
+            # Any padding will be done by the C++ caller.
+            pad_width = 0
+        else:
+            pad_width = (extract_patch_size - stitch_patch_size) // 2
 
-    io_parameters = data_provider.ReadTableParameters(
-        dataset,
-        FLAGS.is_recordio,
-        util.BatchParameters(FLAGS.data_batch_size,
-                             FLAGS.data_batch_num_threads,
-                             FLAGS.data_batch_capacity),
-        # Do non-deterministic data fetching, to increase the variety of what we
-        # see in the visualizer.
-        False,
-        pad_width,
-        crop_size)
+        io_parameters = data_provider.ReadTableParameters(
+            dataset,
+            FLAGS.is_recordio,
+            util.BatchParameters(FLAGS.data_batch_size,
+                                 FLAGS.data_batch_num_threads,
+                                 FLAGS.data_batch_capacity),
+            # Do non-deterministic data fetching, to increase the variety of what we
+            # see in the visualizer.
+            False,
+            pad_width,
+            crop_size)
 
-  z_values = get_z_values()
-  return data_provider.DataParameters(io_parameters, z_values,
-                                      INPUT_CHANNEL_VALUES, TARGET_Z_VALUES,
-                                      TARGET_CHANNEL_VALUES)
+    z_values = get_z_values()
+    return data_provider.DataParameters(io_parameters, z_values,
+                                        INPUT_CHANNEL_VALUES, TARGET_Z_VALUES,
+                                        TARGET_CHANNEL_VALUES)
 
 
 def parameters() -> controller.GetInputTargetAndPredictedParameters:
-  """Creates the network parameters for the given inputs and flags.
+    """Creates the network parameters for the given inputs and flags.
 
-  Returns:
-    A GetInputTargetAndPredictedParameters containing network parameters for the
-    given mode, metric, and other flags.
-  """
-  if FLAGS.metric == METRIC_LOSS:
-    stride = FLAGS.loss_patch_stride
-    shuffle = True
-  else:
-    if FLAGS.model == MODEL_CONCORDANCE:
-      stride = CONCORDANCE_STITCH_STRIDE
+    Returns:
+      A GetInputTargetAndPredictedParameters containing network parameters for the
+      given mode, metric, and other flags.
+    """
+    if FLAGS.metric == METRIC_LOSS:
+        stride = FLAGS.loss_patch_stride
+        shuffle = True
     else:
-      raise NotImplementedError('Unsupported model: %s' % FLAGS.model)
-    # Shuffling breaks stitching.
-    shuffle = False
+        if FLAGS.model == MODEL_CONCORDANCE:
+            stride = CONCORDANCE_STITCH_STRIDE
+        else:
+            raise NotImplementedError('Unsupported model: %s' % FLAGS.model)
+        # Shuffling breaks stitching.
+        shuffle = False
 
-  if FLAGS.mode == MODE_TRAIN:
-    is_train = True
-  else:
-    is_train = False
+    if FLAGS.mode == MODE_TRAIN:
+        is_train = True
+    else:
+        is_train = False
 
-  if FLAGS.model == MODEL_CONCORDANCE:
-    core_model = functools.partial(concordance.core, base_depth=FLAGS.base_depth, num_gpus=FLAGS.num_gpus)
-    add_head = functools.partial(model_util.add_head, is_residual_conv=True)
-    extract_patch_size = CONCORDANCE_EXTRACT_PATCH_SIZE
-    stitch_patch_size = CONCORDANCE_STITCH_PATCH_SIZE
-  else:
-    raise NotImplementedError('Unsupported model: %s' % FLAGS.model)
+    if FLAGS.model == MODEL_CONCORDANCE:
+        core_model = functools.partial(concordance.core, base_depth=FLAGS.base_depth, num_gpus=FLAGS.num_gpus)
+        add_head = functools.partial(model_util.add_head, is_residual_conv=True)
+        extract_patch_size = CONCORDANCE_EXTRACT_PATCH_SIZE
+        stitch_patch_size = CONCORDANCE_STITCH_PATCH_SIZE
+    else:
+        raise NotImplementedError('Unsupported model: %s' % FLAGS.model)
 
-  dp = data_parameters()
+    dp = data_parameters()
 
-  if shuffle:
-    preprocess_num_threads = FLAGS.preprocess_shuffle_batch_num_threads
-  else:
-    # Thread racing is an additional source of shuffling, so we can only
-    # use 1 thread per queue.
-    preprocess_num_threads = 1
-  if is_train or FLAGS.metric == METRIC_JITTER_STITCH:
-    ap = augment.AugmentParameters(FLAGS.augment_offset_std,
-                                   FLAGS.augment_multiplier_std,
-                                   FLAGS.augment_noise_std)
-  else:
-    ap = None
+    if shuffle:
+        preprocess_num_threads = FLAGS.preprocess_shuffle_batch_num_threads
+    else:
+        # Thread racing is an additional source of shuffling, so we can only
+        # use 1 thread per queue.
+        preprocess_num_threads = 1
+    if is_train or FLAGS.metric == METRIC_JITTER_STITCH:
+        ap = augment.AugmentParameters(FLAGS.augment_offset_std,
+                                       FLAGS.augment_multiplier_std,
+                                       FLAGS.augment_noise_std)
+    else:
+        ap = None
 
-  if FLAGS.metric == METRIC_INFER_FULL:
-    bp = None
-  else:
-    bp = util.BatchParameters(FLAGS.preprocess_batch_size,
-                              preprocess_num_threads,
-                              FLAGS.preprocess_batch_capacity)
+    if FLAGS.metric == METRIC_INFER_FULL:
+        bp = None
+    else:
+        bp = util.BatchParameters(FLAGS.preprocess_batch_size,
+                                  preprocess_num_threads,
+                                  FLAGS.preprocess_batch_capacity)
 
-  if FLAGS.loss == LOSS_CROSS_ENTROPY:
-    loss = util.softmax_cross_entropy
-  elif FLAGS.loss == LOSS_RANKED_PROBABILITY_SCORE:
-    loss = util.ranked_probability_score
-  else:
-    logging.fatal('Invalid loss: %s', FLAGS.loss)
+    if FLAGS.loss == LOSS_CROSS_ENTROPY:
+        loss = util.softmax_cross_entropy
+    elif FLAGS.loss == LOSS_RANKED_PROBABILITY_SCORE:
+        loss = util.ranked_probability_score
+    else:
+        logging.fatal('Invalid loss: %s', FLAGS.loss)
 
-  return controller.GetInputTargetAndPredictedParameters(
-      dp, ap, extract_patch_size, stride, stitch_patch_size, bp, core_model,
-      add_head, shuffle, NUM_CLASSES, loss, is_train)
+    return controller.GetInputTargetAndPredictedParameters(
+        dp, ap, extract_patch_size, stride, stitch_patch_size, bp, core_model,
+        add_head, shuffle, NUM_CLASSES, loss, is_train)
 
 
 def train_directory() -> str:
-  """The directory where the training data is written."""
-  return os.path.join(FLAGS.base_directory, 'train')
+    """The directory where the training data is written."""
+    return os.path.join(FLAGS.base_directory, 'train')
 
 
 def output_directory() -> str:
-  """The output directory for the current invocation of this binary."""
-  if FLAGS.mode == MODE_TRAIN:
-    return train_directory()
-  else:
-    if FLAGS.mode == MODE_EVAL_TRAIN:
-      prefix = 'eval_train_'
+    """The output directory for the current invocation of this binary."""
+    if FLAGS.mode == MODE_TRAIN:
+        return train_directory()
     else:
-      prefix = 'eval_eval_'
+        if FLAGS.mode == MODE_EVAL_TRAIN:
+            prefix = 'eval_train_'
+        else:
+            prefix = 'eval_eval_'
 
-    if FLAGS.metric == METRIC_INFER_FULL:
-      suffix = 'infer'
-    elif FLAGS.metric == METRIC_LOSS:
-      suffix = 'loss_' + FLAGS.loss
-    elif FLAGS.metric == METRIC_JITTER_STITCH:
-      suffix = 'jitter_stitch'
-    else:
-      suffix = 'stitch'
+        if FLAGS.metric == METRIC_INFER_FULL:
+            suffix = 'infer'
+        elif FLAGS.metric == METRIC_LOSS:
+            suffix = 'loss_' + FLAGS.loss
+        elif FLAGS.metric == METRIC_JITTER_STITCH:
+            suffix = 'jitter_stitch'
+        else:
+            suffix = 'stitch'
 
-    return os.path.join(FLAGS.base_directory, prefix + suffix)
+        return os.path.join(FLAGS.base_directory, prefix + suffix)
 
 
 def total_loss(
-    gitapp: controller.GetInputTargetAndPredictedParameters,
+        gitapp: controller.GetInputTargetAndPredictedParameters,
 ) -> Tuple[tf.Tensor, Dict[str, lt.LabeledTensor], Dict[str, lt.LabeledTensor]]:
-  """Get the total weighted training loss."""
-  input_loss_lts, target_loss_lts = controller.setup_losses(gitapp)
+    """Get the total weighted training loss."""
+    input_loss_lts, target_loss_lts = controller.setup_losses(gitapp)
 
-  def mean(lts: Dict[str, lt.LabeledTensor]) -> tf.Tensor:
-    sum_op = tf.add_n([t.tensor for t in lts.values()])
-    return sum_op / float(len(lts))
+    def mean(lts: Dict[str, lt.LabeledTensor]) -> tf.Tensor:
+        sum_op = tf.add_n([t.tensor for t in lts.values()])
+        return sum_op / float(len(lts))
 
-  # Give the input loss the same weight as the target loss.
-  input_weight = 0.5
-  total_loss_op = input_weight * mean(input_loss_lts) + (
-      1 - input_weight) * mean(target_loss_lts)
-  tf.summary.scalar('total_loss', total_loss_op)
+    # Give the input loss the same weight as the target loss.
+    input_weight = 0.5
+    total_loss_op = input_weight * mean(input_loss_lts) + (
+            1 - input_weight) * mean(target_loss_lts)
+    tf.summary.scalar('total_loss', total_loss_op)
 
-  return total_loss_op, input_loss_lts, target_loss_lts
+    return total_loss_op, input_loss_lts, target_loss_lts
 
 
 def log_entry_points(g: tf.Graph):
-  logging.info('Entry points: %s',
-               [o.name for o in g.get_operations() if 'entry_point' in o.name])
+    logging.info('Entry points: %s',
+                 [o.name for o in g.get_operations() if 'entry_point' in o.name])
 
 
 def train(gitapp: controller.GetInputTargetAndPredictedParameters):
-  """Train a model."""
-  g = tf.Graph()
-  with g.as_default():
-    total_loss_op, _, _ = total_loss(gitapp)
+    """Train a model."""
+    with tf.device(assign_to_device('/gpu:0', '/cpu:0')):
+        g = tf.Graph()
+        with g.as_default():
+            total_loss_op, _, _ = total_loss(gitapp)
 
-    if FLAGS.optimizer == OPTIMIZER_MOMENTUM:
-      # TODO(ericmc): We may want to do weight decay with the other
-      # optimizers, too.
-      learning_rate = tf.train.exponential_decay(
-          FLAGS.learning_rate,
-          slim.variables.get_global_step(),
-          FLAGS.learning_decay_steps,
-          0.999,
-          staircase=False)
-      tf.summary.scalar('learning_rate', learning_rate)
+            if FLAGS.optimizer == OPTIMIZER_MOMENTUM:
+                # TODO(ericmc): We may want to do weight decay with the other
+                # optimizers, too.
+                learning_rate = tf.train.exponential_decay(
+                    FLAGS.learning_rate,
+                    slim.variables.get_global_step(),
+                    FLAGS.learning_decay_steps,
+                    0.999,
+                    staircase=False)
+                tf.summary.scalar('learning_rate', learning_rate)
 
-      optimizer = tf.train.MomentumOptimizer(learning_rate, 0.875)
-    elif FLAGS.optimizer == OPTIMIZER_ADAGRAD:
-      optimizer = tf.train.AdagradOptimizer(FLAGS.learning_rate)
-    elif FLAGS.optimizer == OPTIMIZER_ADAM:
-      optimizer = tf.train.AdamOptimizer(FLAGS.learning_rate)
-    else:
-      raise NotImplementedError('Unsupported optimizer: %s' % FLAGS.optimizer)
+                optimizer = tf.train.MomentumOptimizer(learning_rate, 0.875)
+            elif FLAGS.optimizer == OPTIMIZER_ADAGRAD:
+                optimizer = tf.train.AdagradOptimizer(FLAGS.learning_rate)
+            elif FLAGS.optimizer == OPTIMIZER_ADAM:
+                optimizer = tf.train.AdamOptimizer(FLAGS.learning_rate)
+            else:
+                raise NotImplementedError('Unsupported optimizer: %s' % FLAGS.optimizer)
 
-    # Set up training.
-    train_op = slim.learning.create_train_op(
-        total_loss_op, optimizer, summarize_gradients=True, colocate_gradients_with_ops=True)
+            # Set up training.
+            train_op = slim.learning.create_train_op(
+                total_loss_op, optimizer, summarize_gradients=True, colocate_gradients_with_ops=True)
 
-    if FLAGS.restore_directory:
-      init_fn = util.restore_model(FLAGS.restore_directory,
-                                   FLAGS.restore_logits)
+            if FLAGS.restore_directory:
+                init_fn = util.restore_model(FLAGS.restore_directory,
+                                             FLAGS.restore_logits)
 
-    else:
-      logging.info('Training a new model.')
-      init_fn = None
+            else:
+                logging.info('Training a new model.')
+                init_fn = None
 
-    total_variable_size, _ = slim.model_analyzer.analyze_vars(
-        slim.get_variables(), print_info=True)
-    logging.info('Total number of variables: %d', total_variable_size)
+            total_variable_size, _ = slim.model_analyzer.analyze_vars(
+                slim.get_variables(), print_info=True)
+            logging.info('Total number of variables: %d', total_variable_size)
 
-    log_entry_points(g)
+            log_entry_points(g)
 
-    slim.learning.train(
-        train_op=train_op,
-        logdir=output_directory(),
-        master=FLAGS.master,
-        is_chief=FLAGS.task == 0,
-        number_of_steps=None,
-        save_summaries_secs=FLAGS.save_summaries_secs,
-        save_interval_secs=FLAGS.save_interval_secs,
-        init_fn=init_fn,
-        saver=tf.train.Saver(keep_checkpoint_every_n_hours=0.25))
+            config = tf.ConfigProto(log_device_placement=False, allow_soft_placement=True)
+
+            slim.learning.train(
+                train_op=train_op,
+                logdir=output_directory(),
+                master=FLAGS.master,
+                is_chief=FLAGS.task == 0,
+                number_of_steps=None,
+                save_summaries_secs=FLAGS.save_summaries_secs,
+                save_interval_secs=FLAGS.save_interval_secs,
+                init_fn=init_fn,
+                saver=tf.train.Saver(keep_checkpoint_every_n_hours=0.25),
+                session_config=config
+            )
 
 
 def eval_loss(gitapp: controller.GetInputTargetAndPredictedParameters):
-  g = tf.Graph()
-  with g.as_default():
-    total_loss_op, input_loss_lts, target_loss_lts = total_loss(gitapp)
+    g = tf.Graph()
+    with g.as_default():
+        total_loss_op, input_loss_lts, target_loss_lts = total_loss(gitapp)
 
-    metric_names = ['total_loss']
-    metric_values = [total_loss_op]
-    for name, loss_lt in dict(input_loss_lts, **target_loss_lts).items():
-      metric_names.append(name)
-      metric_values.append(loss_lt.tensor)
-    metric_names = ['metric/' + n for n in metric_names]
-    metric_values = [metrics.streaming_mean(v) for v in metric_values]
+        metric_names = ['total_loss']
+        metric_values = [total_loss_op]
+        for name, loss_lt in dict(input_loss_lts, **target_loss_lts).items():
+            metric_names.append(name)
+            metric_values.append(loss_lt.tensor)
+        metric_names = ['metric/' + n for n in metric_names]
+        metric_values = [metrics.streaming_mean(v) for v in metric_values]
 
-    names_to_values, names_to_updates = metrics.aggregate_metric_map(
-        dict(zip(metric_names, metric_values)))
+        names_to_values, names_to_updates = metrics.aggregate_metric_map(
+            dict(zip(metric_names, metric_values)))
 
-    for name, value in names_to_values.iteritems():
-      slim.summaries.add_scalar_summary(value, name, print_summary=True)
+        for name, value in names_to_values.iteritems():
+            slim.summaries.add_scalar_summary(value, name, print_summary=True)
 
-    log_entry_points(g)
+        log_entry_points(g)
 
-    num_batches = FLAGS.metric_num_examples // gitapp.bp.size
+        num_batches = FLAGS.metric_num_examples // gitapp.bp.size
 
-    slim.evaluation.evaluation_loop(
-        master=FLAGS.master,
-        checkpoint_dir=train_directory(),
-        logdir=output_directory(),
-        num_evals=num_batches,
-        eval_op=names_to_updates.values(),
-        eval_interval_secs=FLAGS.eval_interval_secs)
+        slim.evaluation.evaluation_loop(
+            master=FLAGS.master,
+            checkpoint_dir=train_directory(),
+            logdir=output_directory(),
+            num_evals=num_batches,
+            eval_op=names_to_updates.values(),
+            eval_interval_secs=FLAGS.eval_interval_secs)
 
 
 def eval_stitch(gitapp: controller.GetInputTargetAndPredictedParameters):
-  g = tf.Graph()
-  with g.as_default():
-    controller.setup_stitch(gitapp)
+    g = tf.Graph()
+    with g.as_default():
+        controller.setup_stitch(gitapp)
 
-    summary_ops = tf.get_collection(tf.GraphKeys.SUMMARIES)
-    input_summary_op = next(
-        x for x in summary_ops if 'input_error_panel' in x.name)
-    target_summary_op = next(
-        x for x in summary_ops if 'target_error_panel' in x.name)
+        summary_ops = tf.get_collection(tf.GraphKeys.SUMMARIES)
+        input_summary_op = next(
+            x for x in summary_ops if 'input_error_panel' in x.name)
+        target_summary_op = next(
+            x for x in summary_ops if 'target_error_panel' in x.name)
 
-    log_entry_points(g)
+        log_entry_points(g)
 
-    slim.evaluation.evaluation_loop(
-        master=FLAGS.master,
-        num_evals=0,
-        checkpoint_dir=train_directory(),
-        logdir=output_directory(),
-        # Merge the summaries to keep the graph state in sync.
-        summary_op=tf.summary.merge([input_summary_op, target_summary_op]),
-        eval_interval_secs=FLAGS.eval_interval_secs)
+        slim.evaluation.evaluation_loop(
+            master=FLAGS.master,
+            num_evals=0,
+            checkpoint_dir=train_directory(),
+            logdir=output_directory(),
+            # Merge the summaries to keep the graph state in sync.
+            summary_op=tf.summary.merge([input_summary_op, target_summary_op]),
+            eval_interval_secs=FLAGS.eval_interval_secs)
 
 
 def export(gitapp: controller.GetInputTargetAndPredictedParameters):
-  g = tf.Graph()
-  with g.as_default():
-    assert FLAGS.metric == METRIC_STITCH
+    g = tf.Graph()
+    with g.as_default():
+        assert FLAGS.metric == METRIC_STITCH
 
-    controller.setup_stitch(gitapp)
+        controller.setup_stitch(gitapp)
 
-    log_entry_points(g)
+        log_entry_points(g)
 
-    signature_map = dict(
-        [(o.name, o) for o in g.get_operations() if 'entry_point' in o.name])
+        signature_map = dict(
+            [(o.name, o) for o in g.get_operations() if 'entry_point' in o.name])
 
-    logging.info('Exporting checkpoint at %s to %s', FLAGS.restore_directory,
-                 FLAGS.export_directory)
-    slim.export_for_serving(
-        g,
-        checkpoint_dir=FLAGS.restore_directory,
-        export_dir=FLAGS.export_directory,
-        generic_signature_tensor_map=signature_map)
+        logging.info('Exporting checkpoint at %s to %s', FLAGS.restore_directory,
+                     FLAGS.export_directory)
+        slim.export_for_serving(
+            g,
+            checkpoint_dir=FLAGS.restore_directory,
+            export_dir=FLAGS.export_directory,
+            generic_signature_tensor_map=signature_map)
 
 
 def infer_single_image(gitapp: controller.GetInputTargetAndPredictedParameters):
-  """Predicts the labels for a single image."""
-  if not gfile.Exists(output_directory()):
-    gfile.MakeDirs(output_directory())
+    """Predicts the labels for a single image."""
+    if not gfile.Exists(output_directory()):
+        gfile.MakeDirs(output_directory())
 
-  if FLAGS.infer_channel_whitelist is not None:
-    infer_channel_whitelist = FLAGS.infer_channel_whitelist.split(',')
-  else:
-    infer_channel_whitelist = None
+    if FLAGS.infer_channel_whitelist is not None:
+        infer_channel_whitelist = FLAGS.infer_channel_whitelist.split(',')
+    else:
+        infer_channel_whitelist = None
 
-  while True:
-    infer.infer(
-        gitapp=gitapp,
-        restore_directory=FLAGS.restore_directory or train_directory(),
-        output_directory=output_directory(),
-        extract_patch_size=CONCORDANCE_EXTRACT_PATCH_SIZE,
-        stitch_stride=CONCORDANCE_STITCH_STRIDE,
-        infer_size=FLAGS.infer_size,
-        channel_whitelist=infer_channel_whitelist,
-        simplify_error_panels=FLAGS.infer_simplify_error_panels,
-    )
-    if not FLAGS.infer_continuously:
-      break
+    while True:
+        infer.infer(
+            gitapp=gitapp,
+            restore_directory=FLAGS.restore_directory or train_directory(),
+            output_directory=output_directory(),
+            extract_patch_size=CONCORDANCE_EXTRACT_PATCH_SIZE,
+            stitch_stride=CONCORDANCE_STITCH_STRIDE,
+            infer_size=FLAGS.infer_size,
+            channel_whitelist=infer_channel_whitelist,
+            simplify_error_panels=FLAGS.infer_simplify_error_panels,
+        )
+        if not FLAGS.infer_continuously:
+            break
 
 
 def main(_):
-  logging.set_verbosity("INFO")
-  if FLAGS.mode == MODE_TRAIN:
-    assert FLAGS.metric == METRIC_LOSS
+    logging.set_verbosity("INFO")
+    if FLAGS.mode == MODE_TRAIN:
+        assert FLAGS.metric == METRIC_LOSS
 
-  if FLAGS.task == 0 and not gfile.Exists(FLAGS.base_directory):
-    gfile.MakeDirs(FLAGS.base_directory)
+    if FLAGS.task == 0 and not gfile.Exists(FLAGS.base_directory):
+        gfile.MakeDirs(FLAGS.base_directory)
 
-  gitapp = parameters()
-  if FLAGS.metric == METRIC_INFER_FULL:
-    infer_single_image(gitapp)
-  elif FLAGS.mode == MODE_TRAIN:
-    train(gitapp)
-  elif FLAGS.mode == MODE_EXPORT:
-    export(gitapp)
-  elif FLAGS.metric == METRIC_LOSS:
-    logging.info('Sleeping %d seconds before beginning evaluation',
-                 FLAGS.eval_delay_secs)
-    time.sleep(FLAGS.eval_delay_secs)
-    eval_loss(gitapp)
-  elif FLAGS.metric == METRIC_JITTER_STITCH or FLAGS.metric == METRIC_STITCH:
-    logging.info('Sleeping %d seconds before beginning evaluation',
-                 FLAGS.eval_delay_secs)
-    time.sleep(FLAGS.eval_delay_secs)
-    eval_stitch(gitapp)
-  else:
-    raise NotImplementedError
+    gitapp = parameters()
+    if FLAGS.metric == METRIC_INFER_FULL:
+        infer_single_image(gitapp)
+    elif FLAGS.mode == MODE_TRAIN:
+        train(gitapp)
+    elif FLAGS.mode == MODE_EXPORT:
+        export(gitapp)
+    elif FLAGS.metric == METRIC_LOSS:
+        logging.info('Sleeping %d seconds before beginning evaluation',
+                     FLAGS.eval_delay_secs)
+        time.sleep(FLAGS.eval_delay_secs)
+        eval_loss(gitapp)
+    elif FLAGS.metric == METRIC_JITTER_STITCH or FLAGS.metric == METRIC_STITCH:
+        logging.info('Sleeping %d seconds before beginning evaluation',
+                     FLAGS.eval_delay_secs)
+        time.sleep(FLAGS.eval_delay_secs)
+        eval_stitch(gitapp)
+    else:
+        raise NotImplementedError
 
 
 if __name__ == '__main__':
-  app.run()
+    app.run()
