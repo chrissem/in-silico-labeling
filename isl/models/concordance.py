@@ -234,8 +234,7 @@ def core(
                 deconv_op = defoveate(lls[4][-1], deconv_op, 'upscale_4_3')
             else:
                 raise AssertionError
-
-                deconv_ops.append(deconv_op)
+            deconv_ops.append(deconv_op)
 
         recursive_op = tf.concat(deconv_ops, 3)
         assert recursive_op.shape.as_list()[1] == uls[0]

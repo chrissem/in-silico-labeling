@@ -417,7 +417,8 @@ def log_entry_points(g: tf.Graph):
 
 def train(gitapp: controller.GetInputTargetAndPredictedParameters):
     """Train a model."""
-    with tf.device(assign_to_device('/gpu:0', '/cpu:0')):
+    with tf.device('/cpu:0'):
+        # with slim.arg_scope([slim.model_variable, slim.variable], device='/cpu:0'):
         g = tf.Graph()
         with g.as_default():
             total_loss_op, _, _ = total_loss(gitapp)
@@ -459,7 +460,7 @@ def train(gitapp: controller.GetInputTargetAndPredictedParameters):
 
             log_entry_points(g)
 
-            config = tf.ConfigProto(log_device_placement=False, allow_soft_placement=True)
+            config = tf.ConfigProto(log_device_placement=True, allow_soft_placement=False)
 
             slim.learning.train(
                 train_op=train_op,
